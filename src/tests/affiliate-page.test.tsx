@@ -53,6 +53,12 @@ vi.mock("../components/affiliate/CustomLinksManager", () => ({
 vi.mock("../components/affiliate/CampaignApplication", () => ({
   CampaignApplication: () => <div>Campaign application content</div>,
 }));
+vi.mock("../components/affiliate/AffiliateLeaderboard", () => ({
+  AffiliateLeaderboard: () => <div>Leaderboard content</div>,
+}));
+vi.mock("../components/affiliate/MilestoneBadges", () => ({
+  MilestoneBadges: () => <div>Milestone badges content</div>,
+}));
 vi.mock("../components/affiliate/AffiliateSettings", () => ({
   AffiliateSettings: () => <div>Affiliate settings content</div>,
 }));
