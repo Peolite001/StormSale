@@ -123,6 +123,36 @@ describe("Subresource Integrity (SRI) Plugin & Hashing (#85)", () => {
       expect(transformed).not.toContain("integrity=");
     });
 
+    it("does not allow data-integrity to suppress actual integrity attribute insertion", () => {
+      const plugin = subresourceIntegrity() as Plugin;
+      const scriptCode = "console.log('data-integrity test');";
+      const expectedIntegrity = computeIntegrity(scriptCode, ["sha384"]);
+
+      const mockBundle: Record<string, any> = {
+        "assets/app.js": {
+          type: "chunk",
+          fileName: "assets/app.js",
+          code: scriptCode,
+        },
+      };
+
+      const handler =
+        typeof plugin.transformIndexHtml === "object" && "handler" in plugin.transformIndexHtml
+          ? plugin.transformIndexHtml.handler
+          : undefined;
+
+      const html = '<script src="/assets/app.js" data-integrity="custom-meta-value"></script>';
+      const ctx = {
+        bundle: mockBundle,
+      } as unknown as IndexHtmlTransformContext;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const transformed = (handler as any)(html, ctx);
+
+      expect(transformed).toContain(`integrity="${expectedIntegrity}"`);
+      expect(transformed).toContain('data-integrity="custom-meta-value"');
+    });
+
     it("does not match bundle items via suffix or basename fallback", () => {
       const plugin = subresourceIntegrity() as Plugin;
       const handler =

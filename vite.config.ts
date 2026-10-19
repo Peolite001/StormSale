@@ -103,10 +103,10 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           const isSelfClosing = /\/\s*$/.test(attrs);
           let cleanedAttrs = attrs.replace(/\/\s*$/, "").trim();
 
-          if (!/\bintegrity\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` integrity="${integrity}"`;
           }
-          if (!/\bcrossorigin\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` crossorigin="${crossOrigin}"`;
           }
 
@@ -138,10 +138,10 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           const isSelfClosing = /\/\s*$/.test(attrs);
           let cleanedAttrs = attrs.replace(/\/\s*$/, "").trim();
 
-          if (!/\bintegrity\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` integrity="${integrity}"`;
           }
-          if (!/\bcrossorigin\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` crossorigin="${crossOrigin}"`;
           }
 
