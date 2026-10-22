@@ -571,18 +571,6 @@ export const AffiliateOverview: React.FC<AffiliateOverviewProps> = ({
                 icon: Award,
                 onClick: onNavigateToMilestones,
               },
-              {
-                label: "Join New Campaign",
-                description: "Discover high-paying campaigns",
-                icon: Users,
-                onClick: () => onNavigate?.("join-campaign"),
-              },
-              {
-                label: "Withdraw Commissions",
-                description: "Claim cleared XLM payouts",
-                icon: DollarSign,
-                onClick: () => onNavigate?.("claim-payouts"),
-              },
             ].map((action, index) => {
               const IconComponent = action.icon;
               return (
