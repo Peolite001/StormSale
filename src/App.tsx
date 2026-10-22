@@ -12,6 +12,7 @@ import { RpcStatusModal } from "./components/shared/RpcStatusModal";
 import { loadBrandConfig } from "./lib/branding";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { Header } from "./components/shared/Header";
 import { ShortLinkRedirect } from "./components/affiliate/ShortLinkRedirect";
 import { AffiliateLeaderboard } from "./components/affiliate/AffiliateLeaderboard";
 import { ThemeToggle } from "./components/shared/ThemeToggle";
@@ -205,6 +206,7 @@ function Router() {
           <Landing onViewLeaderboard={() => setIsPublicLeaderboardOpen(true)} />
         ) : (
           <div className="min-h-screen bg-background">
+            <Header onNavigate={handleNavigate} />
             <main>
               {currentPage === "dashboard" && <Dashboard onNavigate={handleNavigate} />}
               {currentPage === "advertiser" && (
