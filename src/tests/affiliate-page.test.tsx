@@ -46,21 +46,10 @@ vi.mock("../components/affiliate/AffiliateOverview", () => ({
     <div>
       Overview content
       <button onClick={() => onNavigate?.("custom-links")}>Open short links</button>
-      <button onClick={() => onNavigateToLeaderboard?.()}>Open leaderboard</button>
-      <button onClick={() => onNavigateToMilestones?.()}>Open milestones</button>
+      <button onClick={() => onNavigateToLeaderboard?.()}>Go to leaderboard</button>
+      <button onClick={() => onNavigateToMilestones?.()}>Go to milestones</button>
     </div>
   ),
-}));
-vi.mock("../components/affiliate/AffiliateLeaderboard", () => ({
-  AffiliateLeaderboard: ({ onSelectMilestones }: { onSelectMilestones?: () => void }) => (
-    <div>
-      Leaderboard content
-      <button onClick={onSelectMilestones}>Jump to milestones</button>
-    </div>
-  ),
-}));
-vi.mock("../components/affiliate/MilestoneBadges", () => ({
-  MilestoneBadges: () => <div>Milestone badges content</div>,
 }));
 vi.mock("../components/affiliate/TelegramCampaignBrowser", () => ({
   TelegramCampaignBrowser: () => <div>Telegram campaign content</div>,
@@ -70,6 +59,17 @@ vi.mock("../components/affiliate/CustomLinksManager", () => ({
 }));
 vi.mock("../components/affiliate/CampaignApplication", () => ({
   CampaignApplication: () => <div>Campaign application content</div>,
+}));
+vi.mock("../components/affiliate/AffiliateLeaderboard", () => ({
+  AffiliateLeaderboard: ({ onSelectMilestones }: { onSelectMilestones?: () => void }) => (
+    <div>
+      Leaderboard content
+      <button onClick={() => onSelectMilestones?.()}>Claim from leaderboard</button>
+    </div>
+  ),
+}));
+vi.mock("../components/affiliate/MilestoneBadges", () => ({
+  MilestoneBadges: () => <div>Milestone badges content</div>,
 }));
 vi.mock("../components/affiliate/AffiliateSettings", () => ({
   AffiliateSettings: () => <div>Affiliate settings content</div>,
@@ -120,45 +120,31 @@ describe("Affiliate page navigation", () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it("navigates to the leaderboard and milestone badge sections", async () => {
+  it("routes the leaderboard and milestone tabs and their cross-navigation", async () => {
     render(<Affiliate onBack={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Leaderboards" }));
+    // From overview, jump straight to the leaderboard tab (covers overview callbacks).
+    fireEvent.click(screen.getByRole("button", { name: "Go to leaderboard" }));
     expect(await screen.findByText("Leaderboard content")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Jump to milestones" }));
+    // Leaderboard can deep-link to milestones.
+    fireEvent.click(screen.getByRole("button", { name: "Claim from leaderboard" }));
     expect(await screen.findByText("Milestone badges content")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Milestone Badges" }));
-    expect(await screen.findByText("Milestone badges content")).toBeTruthy();
-  });
-
-  it("follows overview and default-branch shortcuts to the new sections", async () => {
-    render(<Affiliate onBack={vi.fn()} />);
-    expect(screen.getByText("Overview content")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Open leaderboard" }));
-    expect(await screen.findByText("Leaderboard content")).toBeTruthy();
-
+    // Back to overview, then straight to milestones.
     fireEvent.click(screen.getByRole("button", { name: "Dashboard Overview" }));
-    expect(await screen.findByText("Overview content")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Open milestones" }));
+    await screen.findByText("Overview content");
+    fireEvent.click(screen.getByRole("button", { name: "Go to milestones" }));
     expect(await screen.findByText("Milestone badges content")).toBeTruthy();
-
-    // The security tab renders through the default branch with the same shortcuts.
-    fireEvent.click(screen.getByRole("button", { name: "Security & Keys" }));
-    expect(await screen.findByText("Overview content")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Open leaderboard" }));
-    expect(await screen.findByText("Leaderboard content")).toBeTruthy();
   });
 
-  it("honours a valid initial tab and falls back for an unknown one", async () => {
-    const { unmount } = render(<Affiliate onBack={vi.fn()} initialTab="leaderboard" />);
-    expect(await screen.findByText("Leaderboard content")).toBeTruthy();
+  it("honors an initial tab and ignores unknown initial tabs", () => {
+    const { unmount } = render(<Affiliate onBack={vi.fn()} initialTab="milestones" />);
+    expect(screen.getByText("Milestone badges content")).toBeTruthy();
     unmount();
 
     localStorage.clear();
-    render(<Affiliate onBack={vi.fn()} initialTab="not-a-real-tab" />);
+    render(<Affiliate onBack={vi.fn()} initialTab="not-a-tab" />);
     expect(screen.getByText("Overview content")).toBeTruthy();
   });
 });

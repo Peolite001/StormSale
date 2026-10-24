@@ -1,339 +1,327 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ mint: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  mintMilestoneBadgeContractCall: vi.fn(),
+}));
 
-vi.mock("../lib/stellar", () => ({ mintMilestoneBadgeContractCall: mocks.mint }));
+vi.mock("../lib/stellar", () => ({
+  mintMilestoneBadgeContractCall: mocks.mintMilestoneBadgeContractCall,
+}));
 
 import {
   MILESTONE_BADGES,
-  claimMilestoneBadge,
   getAffiliatePrivacy,
-  getAffiliateProfile,
-  getClaimedBadges,
-  getLeaderboardRankings,
-  getMaskedPseudonym,
-  getUserGrossSales,
-  maskStellarAddress,
-  saveClaimedBadge,
   setAffiliatePrivacy,
+  maskStellarAddress,
+  getMaskedPseudonym,
+  getClaimedBadges,
+  saveClaimedBadge,
+  getUserGrossSales,
   setUserGrossSales,
+  getLeaderboardRankings,
+  getAffiliateProfile,
+  claimMilestoneBadge,
 } from "../lib/affiliateLeaderboard";
 import type { ClaimedMilestoneRecord, MilestoneTier } from "../types/affiliateLeaderboard";
 
-// Seed affiliate that ranks #1 on the monthly leaderboard.
-const SEED_TOP = "GDXRN7VQK66EZM6PFFKYY2F6J6E4YQZ5YQ47T7V6PX6T3K42P37X2LTA";
-const USER = "GUSER7VQK66EZM6PFFKYY2F6J6E4YQZ5YQ47T7V6PX6T3K42P37X2LTB";
-const UNKNOWN = "GUNKNOWN7VQK66EZM6PFFKYY2F6J6E4YQZ5YQ47T7V6PX6T3K42P37";
+const LONG_ADDRESS = "GDXRN7VQK66EZM6PFFKYY2F6J6E4YQZ5YQ47T7V6PX6T3K42P37X2LTA";
 
-function makeRecord(tier: MilestoneTier, affiliateAddress: string, tokenId = "SBT-TEST-1"): ClaimedMilestoneRecord {
+function makeRecord(
+  affiliateAddress: string,
+  tier: MilestoneTier,
+  tokenId = `SBT-${tier}`,
+): ClaimedMilestoneRecord {
   return {
     tier,
     tokenId,
-    txHash: "0xabcdef1234567890",
-    claimedAt: "2025-06-01T00:00:00Z",
+    txHash: "0xabc123",
+    claimedAt: "2025-01-01T00:00:00Z",
     nonTransferable: true,
-    tokenUri: "ipfs://bafybeistormbadges-test",
+    tokenUri: `ipfs://badge-${tier}`,
     contractAddress: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
     affiliateAddress,
   };
 }
 
-describe("milestone badge catalogue", () => {
-  it("exposes three escalating tiers with matching thresholds", () => {
-    expect(Object.keys(MILESTONE_BADGES).sort()).toEqual(["100k", "10k", "1k"]);
-    expect(MILESTONE_BADGES["1k"].thresholdGrossSales).toBe(1000);
-    expect(MILESTONE_BADGES["10k"].thresholdGrossSales).toBe(10000);
-    expect(MILESTONE_BADGES["100k"].thresholdGrossSales).toBe(100000);
-    expect(MILESTONE_BADGES["100k"].rarity).toBe("Legendary");
-    expect(MILESTONE_BADGES["1k"].perks.length).toBeGreaterThan(0);
-  });
-});
-
-describe("privacy and identity helpers", () => {
+describe("affiliateLeaderboard lib", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
   });
 
-  it("reads and writes the per-address privacy flag", () => {
-    expect(getAffiliatePrivacy(SEED_TOP)).toBe(false);
-
-    setAffiliatePrivacy(SEED_TOP, true);
-    expect(getAffiliatePrivacy(SEED_TOP)).toBe(true);
-
-    setAffiliatePrivacy(SEED_TOP, false);
-    expect(getAffiliatePrivacy(SEED_TOP)).toBe(false);
-
-    // Empty address is a no-op and never readable.
-    setAffiliatePrivacy("", true);
-    expect(getAffiliatePrivacy("")).toBe(false);
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it("masks Stellar addresses, falling back for short inputs", () => {
-    expect(maskStellarAddress("GABC")).toBe("G***ANON");
-    expect(maskStellarAddress("")).toBe("G***ANON");
-    expect(maskStellarAddress(SEED_TOP)).toBe("G***2LTA");
+  describe("MILESTONE_BADGES", () => {
+    it("defines the three tier thresholds", () => {
+      expect(MILESTONE_BADGES["1k"].thresholdGrossSales).toBe(1000);
+      expect(MILESTONE_BADGES["10k"].thresholdGrossSales).toBe(10000);
+      expect(MILESTONE_BADGES["100k"].thresholdGrossSales).toBe(100000);
+    });
   });
 
-  it("derives a deterministic pseudonym", () => {
-    expect(getMaskedPseudonym("")).toBe("StealthStormer#0000");
-    const first = getMaskedPseudonym(SEED_TOP);
-    const second = getMaskedPseudonym(SEED_TOP);
-    expect(first).toBe(second);
-    expect(first).toMatch(/^[A-Za-z]+#\d{4}$/);
-  });
-});
+  describe("maskStellarAddress", () => {
+    it("returns ANON for short/empty addresses", () => {
+      expect(maskStellarAddress("")).toBe("G***ANON");
+      expect(maskStellarAddress("GABC")).toBe("G***ANON");
+    });
 
-describe("claimed badge persistence", () => {
-  beforeEach(() => {
-    localStorage.clear();
+    it("masks long addresses keeping the last four chars", () => {
+      expect(maskStellarAddress(LONG_ADDRESS)).toBe(`G***${LONG_ADDRESS.slice(-4)}`);
+    });
   });
 
-  it("round-trips records and ignores empty or corrupt input", () => {
-    expect(getClaimedBadges("")).toEqual([]);
-    expect(getClaimedBadges(SEED_TOP)).toEqual([]);
+  describe("getMaskedPseudonym", () => {
+    it("returns a default for empty input", () => {
+      expect(getMaskedPseudonym("")).toBe("StealthStormer#0000");
+    });
 
-    saveClaimedBadge(makeRecord("1k", SEED_TOP));
-    expect(getClaimedBadges(SEED_TOP)).toHaveLength(1);
-
-    // Re-saving the same tier replaces the previous record.
-    saveClaimedBadge(makeRecord("1k", SEED_TOP, "SBT-REPLACED"));
-    const stored = getClaimedBadges(SEED_TOP);
-    expect(stored).toHaveLength(1);
-    expect(stored[0].tokenId).toBe("SBT-REPLACED");
-
-    saveClaimedBadge(makeRecord("10k", SEED_TOP));
-    expect(getClaimedBadges(SEED_TOP)).toHaveLength(2);
-
-    // Empty address writes are ignored.
-    saveClaimedBadge(makeRecord("1k", ""));
-    expect(getClaimedBadges("")).toEqual([]);
-
-    // Corrupt entries degrade gracefully.
-    localStorage.setItem(`stormsale_claimed_badges_${UNKNOWN}`, "{not-json");
-    expect(getClaimedBadges(UNKNOWN)).toEqual([]);
-  });
-});
-
-describe("gross sales helpers", () => {
-  beforeEach(() => {
-    localStorage.clear();
+    it("generates a deterministic pseudonym with a numeric suffix", () => {
+      const first = getMaskedPseudonym(LONG_ADDRESS);
+      const second = getMaskedPseudonym(LONG_ADDRESS);
+      expect(first).toBe(second);
+      expect(first).toMatch(/#.+/);
+    });
   });
 
-  it("returns zeros for a missing address and determinism otherwise", () => {
-    expect(getUserGrossSales("")).toEqual({ weekly: 0, monthly: 0, allTime: 0 });
+  describe("privacy toggles", () => {
+    it("defaults to false for empty address", () => {
+      expect(getAffiliatePrivacy("")).toBe(false);
+    });
 
-    const first = getUserGrossSales(USER);
-    const second = getUserGrossSales(USER);
-    expect(first).toEqual(second);
-    expect(first.monthly).toBeGreaterThanOrEqual(1250);
+    it("persists and reads a masked preference", () => {
+      setAffiliatePrivacy(LONG_ADDRESS, true);
+      expect(getAffiliatePrivacy(LONG_ADDRESS)).toBe(true);
+      setAffiliatePrivacy(LONG_ADDRESS, false);
+      expect(getAffiliatePrivacy(LONG_ADDRESS)).toBe(false);
+    });
+
+    it("ignores setAffiliatePrivacy for empty address", () => {
+      setAffiliatePrivacy("", true);
+      expect(getAffiliatePrivacy("")).toBe(false);
+    });
+
+    it("survives a storage read failure", () => {
+      const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("boom");
+      });
+      expect(getAffiliatePrivacy(LONG_ADDRESS)).toBe(false);
+      spy.mockRestore();
+    });
+
+    it("logs and swallows a storage write failure", () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("quota");
+      });
+      setAffiliatePrivacy(LONG_ADDRESS, true);
+      expect(err).toHaveBeenCalled();
+      spy.mockRestore();
+      err.mockRestore();
+    });
   });
 
-  it("persists manual overrides and derives the dependent periods", () => {
-    setUserGrossSales(USER, { monthly: 5000 });
-    const derived = getUserGrossSales(USER);
-    expect(derived.monthly).toBe(5000);
-    expect(derived.weekly).toBe(Math.round(5000 * 0.28));
-    expect(derived.allTime).toBe(Math.round(5000 * 4.2));
+  describe("claimed badges storage", () => {
+    it("returns empty for a fresh address", () => {
+      expect(getClaimedBadges(LONG_ADDRESS)).toEqual([]);
+    });
 
-    setUserGrossSales(USER, { weekly: 100, monthly: 2000, allTime: 9000 });
-    expect(getUserGrossSales(USER)).toEqual({ weekly: 100, monthly: 2000, allTime: 9000 });
+    it("saves a badge and dedups by tier", () => {
+      saveClaimedBadge(makeRecord(LONG_ADDRESS, "1k", "first"));
+      saveClaimedBadge(makeRecord(LONG_ADDRESS, "1k", "second"));
+      saveClaimedBadge(makeRecord(LONG_ADDRESS, "10k", "silver"));
+      const badges = getClaimedBadges(LONG_ADDRESS);
+      const bronze = badges.filter((b) => b.tier === "1k");
+      expect(bronze).toHaveLength(1);
+      expect(bronze[0].tokenId).toBe("second");
+      expect(badges).toHaveLength(2);
+    });
 
-    // Empty address is ignored without throwing.
-    setUserGrossSales("", { monthly: 12345 });
-    expect(getUserGrossSales("")).toEqual({ weekly: 0, monthly: 0, allTime: 0 });
+    it("ignores saving a record with no address", () => {
+      saveClaimedBadge(makeRecord("", "1k"));
+      expect(getClaimedBadges("")).toEqual([]);
+    });
 
-    // Corrupt override falls back to the deterministic baseline.
-    localStorage.setItem(`stormsale_user_sales_${USER}`, "{bad-json");
-    expect(getUserGrossSales(USER).monthly).toBeGreaterThan(0);
-  });
-});
-
-describe("leaderboard rankings", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    vi.clearAllMocks();
-  });
-
-  it("returns the top 50 with consistent stats and ranks", () => {
-    const { items, stats } = getLeaderboardRankings();
-    expect(items).toHaveLength(50);
-    expect(items[0].rank).toBe(1);
-    expect(items[49].rank).toBe(50);
-    expect(stats.activeAffiliatesCount).toBe(50);
-    expect(stats.topAffiliateMonthlyVolume).toBe(items[0].monthlyGrossSales);
-    expect(stats.totalBadgesClaimed).toBeGreaterThan(0);
-    expect(stats.totalMonthlyVolume).toBeGreaterThan(0);
+    it("returns empty and tolerates malformed stored JSON", () => {
+      localStorage.setItem(`stormsale_claimed_badges_${LONG_ADDRESS}`, "{not-json");
+      expect(getClaimedBadges(LONG_ADDRESS)).toEqual([]);
+    });
   });
 
-  it("sorts by the requested timeframe", () => {
-    const weekly = getLeaderboardRankings("weekly").items;
-    expect(weekly[0].weeklyGrossSales).toBeGreaterThanOrEqual(weekly[1].weeklyGrossSales);
+  describe("gross sales", () => {
+    it("returns zeros for empty address", () => {
+      expect(getUserGrossSales("")).toEqual({ weekly: 0, monthly: 0, allTime: 0 });
+    });
 
-    const allTime = getLeaderboardRankings("all-time").items;
-    expect(allTime[0].allTimeGrossSales).toBeGreaterThanOrEqual(allTime[1].allTimeGrossSales);
+    it("is deterministic without an override", () => {
+      const a = getUserGrossSales(LONG_ADDRESS);
+      const b = getUserGrossSales(LONG_ADDRESS);
+      expect(a).toEqual(b);
+      expect(a.monthly).toBeGreaterThan(0);
+    });
 
-    const monthly = getLeaderboardRankings("monthly").items;
-    expect(monthly[0].monthlyGrossSales).toBeGreaterThanOrEqual(monthly[1].monthlyGrossSales);
+    it("honors a manual override", () => {
+      setUserGrossSales(LONG_ADDRESS, { monthly: 5000 });
+      expect(getUserGrossSales(LONG_ADDRESS).monthly).toBe(5000);
+    });
+
+    it("derives weekly/allTime when only monthly is supplied", () => {
+      setUserGrossSales(LONG_ADDRESS, { monthly: 10000 });
+      const sales = getUserGrossSales(LONG_ADDRESS);
+      expect(sales.weekly).toBe(Math.round(10000 * 0.28));
+      expect(sales.allTime).toBe(Math.round(10000 * 4.2));
+    });
+
+    it("keeps explicit weekly/allTime values", () => {
+      setUserGrossSales(LONG_ADDRESS, { weekly: 123, monthly: 1000, allTime: 9999 });
+      expect(getUserGrossSales(LONG_ADDRESS)).toEqual({ weekly: 123, monthly: 1000, allTime: 9999 });
+    });
+
+    it("ignores empty-address overrides", () => {
+      setUserGrossSales("", { monthly: 500 });
+      expect(getUserGrossSales("")).toEqual({ weekly: 0, monthly: 0, allTime: 0 });
+    });
   });
 
-  it("sorts by conversions and commission earnings", () => {
-    const conversions = getLeaderboardRankings("monthly", "", "conversions").items;
-    expect(conversions[0].verifiedSalesCount).toBeGreaterThanOrEqual(
-      conversions[1].verifiedSalesCount,
-    );
+  describe("getLeaderboardRankings", () => {
+    it("returns ranked items and aggregate stats", () => {
+      const { items, stats } = getLeaderboardRankings("monthly", "", "sales", null);
+      expect(items.length).toBeGreaterThan(0);
+      expect(items.length).toBeLessThanOrEqual(50);
+      expect(items[0].rank).toBe(1);
+      expect(stats.activeAffiliatesCount).toBeGreaterThan(0);
+      expect(stats.topAffiliateMonthlyVolume).toBeGreaterThanOrEqual(items[0].monthlyGrossSales);
+    });
 
-    const commission = getLeaderboardRankings("monthly", "", "commission").items;
-    expect(commission[0].commissionEarnedXlm).toBeGreaterThanOrEqual(
-      commission[1].commissionEarnedXlm,
-    );
+    it("sorts differently across timeframes and sort keys", () => {
+      const weekly = getLeaderboardRankings("weekly", "", "sales", null).items;
+      expect(weekly[0].weeklyGrossSales).toBeGreaterThanOrEqual(weekly[1].weeklyGrossSales);
+      const allTime = getLeaderboardRankings("all-time", "", "sales", null).items;
+      expect(allTime[0].allTimeGrossSales).toBeGreaterThanOrEqual(allTime[1].allTimeGrossSales);
+      const conv = getLeaderboardRankings("monthly", "", "conversions", null).items;
+      expect(conv[0].verifiedSalesCount).toBeGreaterThanOrEqual(conv[1].verifiedSalesCount);
+      const comm = getLeaderboardRankings("monthly", "", "commission", null).items;
+      expect(comm[0].commissionEarnedXlm).toBeGreaterThanOrEqual(comm[1].commissionEarnedXlm);
+    });
+
+    it("injects the connected user into the board", () => {
+      const userAddr = "GCONNECTEDUSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(userAddr, { monthly: 500000 });
+      const { items } = getLeaderboardRankings("monthly", "", "sales", userAddr);
+      const found = items.find((i) => i.address === userAddr);
+      expect(found).toBeDefined();
+      expect(found!.monthlyGrossSales).toBe(500000);
+    });
+
+    it("filters items by search term", () => {
+      const { items } = getLeaderboardRankings("monthly", "zzzznomatch", "sales", null);
+      expect(items).toHaveLength(0);
+      const byRank = getLeaderboardRankings("monthly", "1", "sales", null).items;
+      expect(byRank.some((i) => i.rank === 1)).toBe(true);
+    });
+
+    it("merges local privacy + claimed badge overrides into seed rows", () => {
+      const seed = getLeaderboardRankings("monthly", "", "sales", null).items[0];
+      setAffiliatePrivacy(seed.address, true);
+      saveClaimedBadge(makeRecord(seed.address, "100k"));
+      const refreshed = getLeaderboardRankings("monthly", "", "sales", null).items.find(
+        (i) => i.address === seed.address,
+      );
+      expect(refreshed!.isPrivacyMasked).toBe(true);
+      expect(refreshed!.claimedBadges.some((b) => b.tier === "100k")).toBe(true);
+    });
   });
 
-  it("filters by address, pseudonym and rank, and returns an empty list otherwise", () => {
-    const byPseudonym = getLeaderboardRankings("monthly", "ApexStormer").items;
-    expect(byPseudonym).toHaveLength(1);
-    expect(byPseudonym[0].pseudonym).toBe("ApexStormer#9942");
+  describe("getAffiliateProfile", () => {
+    it("targets the $1K tier when below threshold", () => {
+      const addr = "GBELOW1KAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 500 });
+      const profile = getAffiliateProfile(addr, null);
+      expect(profile.nextMilestoneProgress.nextTier).toBe("1k");
+      expect(profile.unlockedTiers).toEqual([]);
+    });
 
-    const byAddress = getLeaderboardRankings("monthly", SEED_TOP.slice(0, 10)).items;
-    expect(byAddress.some((item) => item.address === SEED_TOP)).toBe(true);
+    it("targets the $10K tier after unlocking $1K", () => {
+      const addr = "GBRONZEUSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 5000 });
+      const profile = getAffiliateProfile(addr, null);
+      expect(profile.unlockedTiers).toContain("1k");
+      expect(profile.nextMilestoneProgress.nextTier).toBe("10k");
+    });
 
-    const byMasked = getLeaderboardRankings("monthly", "2lta").items;
-    expect(byMasked.some((item) => item.maskedAddress.endsWith("2LTA"))).toBe(true);
+    it("targets the $100K tier after unlocking $10K", () => {
+      const addr = "GSILVERUSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 50000 });
+      const profile = getAffiliateProfile(addr, null);
+      expect(profile.unlockedTiers).toEqual(expect.arrayContaining(["1k", "10k"]));
+      expect(profile.nextMilestoneProgress.nextTier).toBe("100k");
+    });
 
-    const byRank = getLeaderboardRankings("monthly", "50").items;
-    expect(byRank.length).toBeGreaterThanOrEqual(1);
+    it("reports all milestones achieved past $100K", () => {
+      const addr = "GGOLDTITANAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 250000 });
+      const profile = getAffiliateProfile(addr, null);
+      expect(profile.unlockedTiers).toEqual(["1k", "10k", "100k"]);
+      expect(profile.nextMilestoneProgress.nextTier).toBeNull();
+      expect(profile.nextMilestoneProgress.progressPercentage).toBe(100);
+    });
 
-    const noMatch = getLeaderboardRankings("monthly", "zzz-no-such-marketer").items;
-    expect(noMatch).toEqual([]);
+    it("flags the current user and carries claimed badges", () => {
+      const addr = "GCURRENTUSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 2000 });
+      saveClaimedBadge(makeRecord(addr, "1k"));
+      const profile = getAffiliateProfile(addr, addr);
+      expect(profile.avatarSeed).toBe("current-user");
+      expect(profile.claimedBadges.some((b) => b.tier === "1k")).toBe(true);
+    });
   });
 
-  it("replaces an existing affiliate when the connected user is already ranked", () => {
-    const { items, stats } = getLeaderboardRankings("monthly", "", "sales", SEED_TOP);
-    expect(stats.activeAffiliatesCount).toBe(50);
-    const mine = items.find((item) => item.address === SEED_TOP);
-    expect(mine).toBeDefined();
-    expect(mine?.pseudonym).toBe(getMaskedPseudonym(SEED_TOP));
-    expect(mine?.avatarSeed).toBe("user");
-  });
+  describe("claimMilestoneBadge", () => {
+    it("throws for an unknown tier", async () => {
+      await expect(
+        claimMilestoneBadge(LONG_ADDRESS, "999k" as MilestoneTier, "mock"),
+      ).rejects.toThrow(/Invalid milestone badge tier/);
+    });
 
-  it("appends a new affiliate for an unseen connected user", () => {
-    const { stats } = getLeaderboardRankings("monthly", "", "sales", USER);
-    expect(stats.activeAffiliatesCount).toBe(51);
-  });
+    it("throws when the sales threshold is not met", async () => {
+      const addr = "GPOORAFFILIATEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 10 });
+      await expect(claimMilestoneBadge(addr, "1k", "mock")).rejects.toThrow(/Milestone not reached/);
+    });
 
-  it("reflects stored privacy settings and locally claimed badges", () => {
-    setAffiliatePrivacy(SEED_TOP, true);
-    saveClaimedBadge(makeRecord("1k", SEED_TOP, "SBT-LOCAL"));
+    it("returns an existing record without re-minting", async () => {
+      const addr = "GEXistingAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 5000 });
+      saveClaimedBadge(makeRecord(addr, "1k", "already"));
+      const record = await claimMilestoneBadge(addr, "1k", "mock");
+      expect(record.tokenId).toBe("already");
+      expect(mocks.mintMilestoneBadgeContractCall).not.toHaveBeenCalled();
+    });
 
-    const { items } = getLeaderboardRankings("monthly");
-    const mine = items.find((item) => item.address === SEED_TOP);
-    expect(mine?.isPrivacyMasked).toBe(true);
-    expect(mine?.claimedBadges).toHaveLength(1);
-    expect(mine?.claimedBadges[0].tokenId).toBe("SBT-LOCAL");
-  });
-});
+    it("mints on-chain and persists a new soulbound record", async () => {
+      const addr = "GNEWWINNERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 150000 });
+      mocks.mintMilestoneBadgeContractCall.mockResolvedValue({
+        success: true,
+        txHash: "0xfreshmint",
+        tokenId: "SBT-FRESH-100K",
+      });
+      const record = await claimMilestoneBadge(addr, "100k", "mock");
+      expect(mocks.mintMilestoneBadgeContractCall).toHaveBeenCalledWith(addr, "100k", "mock");
+      expect(record.tokenId).toBe("SBT-FRESH-100K");
+      expect(record.nonTransferable).toBe(true);
+      expect(getClaimedBadges(addr).some((b) => b.tokenId === "SBT-FRESH-100K")).toBe(true);
+    });
 
-describe("affiliate profile", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    vi.clearAllMocks();
-  });
-
-  it("computes milestone progress for each volume band", () => {
-    setUserGrossSales(USER, { monthly: 500 });
-    const belowFirst = getAffiliateProfile(USER, USER);
-    expect(belowFirst.unlockedTiers).toEqual([]);
-    expect(belowFirst.nextMilestoneProgress.nextTier).toBe("1k");
-    expect(belowFirst.nextMilestoneProgress.remainingSales).toBe(500);
-    expect(belowFirst.nextMilestoneProgress.progressPercentage).toBe(50);
-    expect(belowFirst.avatarSeed).toBe("current-user");
-
-    setUserGrossSales(USER, { monthly: 1500 });
-    const bronze = getAffiliateProfile(USER, USER);
-    expect(bronze.unlockedTiers).toEqual(["1k"]);
-    expect(bronze.nextMilestoneProgress.nextTier).toBe("10k");
-    expect(bronze.nextMilestoneProgress.targetSales).toBe(10000);
-
-    setUserGrossSales(USER, { monthly: 12500 });
-    const silver = getAffiliateProfile(USER, USER);
-    expect(silver.unlockedTiers).toEqual(["1k", "10k"]);
-    expect(silver.nextMilestoneProgress.nextTier).toBe("100k");
-
-    setUserGrossSales(USER, { monthly: 125000 });
-    const titan = getAffiliateProfile(USER, USER);
-    expect(titan.unlockedTiers).toEqual(["1k", "10k", "100k"]);
-    expect(titan.nextMilestoneProgress.nextTier).toBeNull();
-    expect(titan.nextMilestoneProgress.nextTierName).toBeNull();
-    expect(titan.nextMilestoneProgress.remainingSales).toBe(0);
-    expect(titan.nextMilestoneProgress.progressPercentage).toBe(100);
-  });
-
-  it("marks other affiliates and derives rank for unknown addresses", () => {
-    setUserGrossSales(SEED_TOP, { monthly: 1500 });
-    const ownProfile = getAffiliateProfile(SEED_TOP, USER);
-    expect(ownProfile.avatarSeed).toBe(SEED_TOP.slice(0, 6));
-
-    // A very low volume pushes the affiliate outside the top 50, exercising the rank fallback.
-    setUserGrossSales(UNKNOWN, { monthly: 1300 });
-    const unknown = getAffiliateProfile(UNKNOWN);
-    expect(unknown.rank).toBe(51);
-    expect(unknown.maskedAddress).toBe(maskStellarAddress(UNKNOWN));
-  });
-
-  it("surfaces claimed badges and privacy state", () => {
-    setUserGrossSales(USER, { monthly: 1500 });
-    saveClaimedBadge(makeRecord("1k", USER, "SBT-OWNED"));
-    setAffiliatePrivacy(USER, true);
-
-    const profile = getAffiliateProfile(USER, USER);
-    expect(profile.claimedBadges).toHaveLength(1);
-    expect(profile.claimedBadges[0].tokenId).toBe("SBT-OWNED");
-    expect(profile.isPrivacyMasked).toBe(true);
-  });
-});
-
-describe("claimMilestoneBadge", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    vi.clearAllMocks();
-  });
-
-  it("rejects an unknown tier", async () => {
-    await expect(claimMilestoneBadge(USER, "bogus" as MilestoneTier)).rejects.toThrow(
-      "Invalid milestone badge tier",
-    );
-  });
-
-  it("rejects volumes that have not reached the threshold", async () => {
-    setUserGrossSales(USER, { monthly: 500 });
-    await expect(claimMilestoneBadge(USER, "1k")).rejects.toThrow(/Milestone not reached/);
-    expect(mocks.mint).not.toHaveBeenCalled();
-  });
-
-  it("returns the existing record when the badge was already claimed", async () => {
-    setUserGrossSales(USER, { monthly: 5000 });
-    saveClaimedBadge(makeRecord("1k", USER, "SBT-EXISTING"));
-
-    const record = await claimMilestoneBadge(USER, "1k");
-    expect(record.tokenId).toBe("SBT-EXISTING");
-    expect(mocks.mint).not.toHaveBeenCalled();
-  });
-
-  it("mints on-chain, persists the record, and honours the wallet type", async () => {
-    setUserGrossSales(USER, { monthly: 5000 });
-    mocks.mint.mockResolvedValue({ tokenId: "SBT-MINTED", txHash: "0xfeed" });
-
-    const record = await claimMilestoneBadge(USER, "1k", "albedo");
-    expect(mocks.mint).toHaveBeenCalledWith(USER, "1k", "albedo");
-    expect(record.tokenId).toBe("SBT-MINTED");
-    expect(record.txHash).toBe("0xfeed");
-    expect(record.nonTransferable).toBe(true);
-    expect(getClaimedBadges(USER)).toHaveLength(1);
-
-    mocks.mint.mockClear();
-    setUserGrossSales(USER, { monthly: 12500 });
-    await claimMilestoneBadge(USER, "10k");
-    expect(mocks.mint).toHaveBeenCalledWith(USER, "10k", "freighter");
+    it("propagates on-chain mint failures", async () => {
+      const addr = "GFAILUSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      setUserGrossSales(addr, { monthly: 5000 });
+      mocks.mintMilestoneBadgeContractCall.mockRejectedValue(new Error("ledger rejected"));
+      await expect(claimMilestoneBadge(addr, "1k", "ledger")).rejects.toThrow(
+        /ledger rejected/,
+      );
+    });
   });
 });

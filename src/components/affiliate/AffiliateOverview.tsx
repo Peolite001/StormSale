@@ -243,6 +243,18 @@ import { TerminologyTooltip, TerminologyGuideButton } from "../../components/ui/
 
 const AFFILIATE_QUICK_ACTIONS = [
   {
+    id: "leaderboard",
+    label: "Affiliate Leaderboard",
+    description: "Rank top 50 by verified volume",
+    icon: Trophy,
+  },
+  {
+    id: "milestones",
+    label: "Milestone Badges",
+    description: "Claim $1K, $10K, $100K Soulbound SBTs",
+    icon: Award,
+  },
+  {
     id: "custom-links",
     label: "Custom Short Links",
     description: "Branded cloaked URLs",
@@ -553,31 +565,20 @@ export const AffiliateOverview: React.FC<AffiliateOverviewProps> = ({
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              ...AFFILIATE_QUICK_ACTIONS.map((action) => ({
-                ...action,
-                onClick: () => onNavigate?.(action.id),
-              })),
-              {
-                label: "Affiliate Leaderboard",
-                description: "Rank top 50 by verified volume",
-                icon: Trophy,
-                onClick: onNavigateToLeaderboard,
-              },
-              {
-                label: "Milestone Badges",
-                description: "Claim $1K, $10K, $100K Soulbound SBTs",
-                icon: Award,
-                onClick: onNavigateToMilestones,
-              },
-            ].map((action, index) => {
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {AFFILIATE_QUICK_ACTIONS.map((action, index) => {
               const IconComponent = action.icon;
               return (
                 <Button
                   key={index}
                   variant="outline"
-                  onClick={action.onClick}
+                  onClick={() =>
+                    action.id === "leaderboard"
+                      ? onNavigateToLeaderboard?.()
+                      : action.id === "milestones"
+                        ? onNavigateToMilestones?.()
+                        : onNavigate?.(action.id)
+                  }
                   className="h-24 flex-col gap-3 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-slate-50 dark:hover:bg-zinc-800 hover:border-slate-300 dark:hover:border-zinc-700 transition-all group"
                 >
                   <IconComponent className="w-6 h-6 text-zinc-400 dark:text-zinc-500 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />

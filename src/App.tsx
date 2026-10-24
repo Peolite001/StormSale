@@ -14,7 +14,6 @@ import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Header } from "./components/shared/Header";
 import { ShortLinkRedirect } from "./components/affiliate/ShortLinkRedirect";
-import { AffiliateLeaderboard } from "./components/affiliate/AffiliateLeaderboard";
 import { ThemeToggle } from "./components/shared/ThemeToggle";
 import { Button } from "./components/ui/button";
 import { ArrowLeft, Zap } from "lucide-react";
@@ -35,6 +34,11 @@ export const Auditor = lazy(() => import("./pages/Auditor").then((m) => ({ defau
 export const BrandedCampaignView = lazy(() =>
   import("./components/shared/BrandedCampaignView").then((m) => ({
     default: m.BrandedCampaignView,
+  })),
+);
+export const AffiliateLeaderboard = lazy(() =>
+  import("./components/affiliate/AffiliateLeaderboard").then((m) => ({
+    default: m.AffiliateLeaderboard,
   })),
 );
 
@@ -73,7 +77,14 @@ const ErrorFallback = () => (
   </div>
 );
 
-const VALID_PAGES = ["dashboard", "advertiser", "affiliate", "auditor"] as const;
+const VALID_PAGES = [
+  "dashboard",
+  "advertiser",
+  "affiliate",
+  "leaderboard",
+  "milestones",
+  "auditor",
+] as const;
 
 type Page = (typeof VALID_PAGES)[number];
 
@@ -103,7 +114,6 @@ function Router() {
     }
     prevConnectedRef.current = isConnected;
   }, [isConnected, setCurrentPage]);
-
   const [activeBrandSubdomain, setActiveBrandSubdomain] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
@@ -224,6 +234,14 @@ function Router() {
                     />
                   </Suspense>
                 </ProtectedRoute>
+              )}
+              {(currentPage === "leaderboard" || currentPage === "milestones") && (
+                <Suspense fallback={<div className="p-8 text-center">Loading Affiliate...</div>}>
+                  <Affiliate
+                    onBack={() => handleNavigate("dashboard")}
+                    initialTab={currentPage === "milestones" ? "milestones" : "leaderboard"}
+                  />
+                </Suspense>
               )}
               {currentPage === "auditor" && (
                 <ProtectedRoute requiredRole="AUDITOR" onNavigate={handleNavigate}>
