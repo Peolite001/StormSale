@@ -2,7 +2,7 @@
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { visualizer } from "rollup-plugin-visualizer";
-import { subresourceIntegrity } from "./src/lib/vite/subresource-integrity-plugin";
+import { subresourceIntegrity } from "./src/lib/vite/subresource-integrity-plugin.js";
 
 // Re-exported so callers (and the tests added under src/tests/) can pull in the
 // SRI helpers without knowing the internal path. The implementation lives under
@@ -12,8 +12,8 @@ export {
   computeIntegrity,
   subresourceIntegrity,
   KNOWN_EXTERNAL_INTEGRITY,
-} from "./src/lib/vite/subresource-integrity-plugin";
-export type { SubresourceIntegrityOptions } from "./src/lib/vite/subresource-integrity-plugin";
+} from "./src/lib/vite/subresource-integrity-plugin.js";
+export type { SubresourceIntegrityOptions } from "./src/lib/vite/subresource-integrity-plugin.js";
 
 // https://vite.dev/config/
 export default defineConfig({
