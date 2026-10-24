@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+﻿import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -24,7 +24,7 @@ export interface SubresourceIntegrityOptions {
 /**
  * Computes the Subresource Integrity hash for a given content string or buffer.
  */
-function computeIntegrity(
+export function computeIntegrity(
   content: string | Uint8Array,
   algorithms: readonly ("sha256" | "sha384" | "sha512")[] = ["sha384"],
 ): string {
@@ -81,21 +81,6 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
             return byFileName;
           }
 
-          const bySuffix = Object.values(bundle).find(
-            (item) =>
-              item.fileName.endsWith("/" + normalized) || normalized.endsWith("/" + item.fileName),
-          );
-          if (bySuffix) {
-            return bySuffix;
-          }
-
-          const baseName = normalized.split("/").pop();
-          if (baseName) {
-            return Object.values(bundle).find(
-              (item) => item.fileName.split("/").pop() === baseName,
-            );
-          }
-
           return undefined;
         };
 
@@ -104,7 +89,7 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
           if (!srcMatch) return fullMatch;
           const src = srcMatch[1];
-          if (/^(https?:)?\/\//i.test(src) && !src.startsWith("/")) {
+          if (/^(https?:)?\/\//i.test(src)) {
             return fullMatch;
           }
 
@@ -118,10 +103,10 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           const isSelfClosing = /\/\s*$/.test(attrs);
           let cleanedAttrs = attrs.replace(/\/\s*$/, "").trim();
 
-          if (!/\bintegrity\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` integrity="${integrity}"`;
           }
-          if (!/\bcrossorigin\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` crossorigin="${crossOrigin}"`;
           }
 
@@ -139,7 +124,7 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           const hrefMatch = attrs.match(/\bhref=["']([^"']+)["']/i);
           if (!hrefMatch) return fullMatch;
           const href = hrefMatch[1];
-          if (/^(https?:)?\/\//i.test(href) && !href.startsWith("/")) {
+          if (/^(https?:)?\/\//i.test(href)) {
             return fullMatch;
           }
 
@@ -153,10 +138,10 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           const isSelfClosing = /\/\s*$/.test(attrs);
           let cleanedAttrs = attrs.replace(/\/\s*$/, "").trim();
 
-          if (!/\bintegrity\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` integrity="${integrity}"`;
           }
-          if (!/\bcrossorigin\b/i.test(cleanedAttrs)) {
+          if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleanedAttrs)) {
             cleanedAttrs += ` crossorigin="${crossOrigin}"`;
           }
 
@@ -211,8 +196,8 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    visualizer({ open: false, gzipSize: true, brotliSize: true }),
     subresourceIntegrity(),
+    visualizer({ open: false, gzipSize: true, brotliSize: true }),
   ],
   resolve: {
     dedupe: ["react", "react-dom"],
