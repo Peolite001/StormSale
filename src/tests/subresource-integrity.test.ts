@@ -3,7 +3,7 @@ import {
   computeIntegrity,
   subresourceIntegrity,
   KNOWN_EXTERNAL_INTEGRITY,
-} from "../../vite.config";
+} from "../lib/vite/subresource-integrity-plugin";
 import type { Plugin, IndexHtmlTransformContext } from "vite";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";

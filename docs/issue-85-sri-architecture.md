@@ -1,8 +1,15 @@
 # Issue #85 — Subresource Integrity (SRI) Build
 
-**Target page:** [`vite.config.ts`](../vite.config.ts)
-**Plugins:** `vite-plugin-subresource-integrity` (defined inline in `vite.config.ts`)
+**Target page:** [`vite.config.ts`](../vite.config.ts) (build configuration wiring)
+**Plugin source:** [`src/lib/vite/subresource-integrity-plugin.ts`](../src/lib/vite/subresource-integrity-plugin.ts)
 **Test coverage:** [`src/tests/subresource-integrity.test.ts`](../src/tests/subresource-integrity.test.ts)
+
+The plugin implementation was extracted from `vite.config.ts` into
+`src/lib/vite/subresource-integrity-plugin.ts` so Vitest's
+`coverage.include: ["src/**/*.{ts,tsx}"]` glob measures it directly and the
+CI PR coverage gate stays above the 80% diff threshold. `vite.config.ts`
+re-exports `computeIntegrity`, `subresourceIntegrity`, and
+`KNOWN_EXTERNAL_INTEGRITY` so existing imports keep resolving.
 
 ## Goal
 
@@ -55,7 +62,7 @@ flowchart TD
     P -->|No| R[Block: refuses to run tampered asset]
 ```
 
-## Data flow inside `vite.config.ts`
+## Data flow inside `src/lib/vite/subresource-integrity-plugin.ts`
 
 | Layer | Responsibility | Symbol |
 | --- | --- | --- |
@@ -93,8 +100,10 @@ flowchart TD
    ```bash
    curl -sSL https://cdn.example.com/lib.js | openssl dgst -sha384 -binary | openssl base64 -A
    ```
-2. Add the pair to `KNOWN_EXTERNAL_INTEGRITY` in `vite.config.ts` (or pass it
-   via `subresourceIntegrity({ external: { … } })` at the call site).
+2. Add the pair to `KNOWN_EXTERNAL_INTEGRITY` in
+   `src/lib/vite/subresource-integrity-plugin.ts` (or pass it via
+   `subresourceIntegrity({ external: { … } })` at the call site in
+   `vite.config.ts`).
 3. Run `npm run build` and inspect `dist/index.html` — the tag should now carry
    `integrity="sha384-…" crossorigin="anonymous"`.
 4. Load the built app and confirm the browser console shows no
