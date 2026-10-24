@@ -13,36 +13,46 @@ the resource is refused — no code executes.
 
 The plugin delivers two Acceptance Criteria:
 
-1. **Automatic build-time hash generation** — `transformIndexHtml` computes a
-   SHA-384 digest of every emitted JS/CSS chunk and appends it to the tag as
-   `integrity="sha384-…"`, plus `crossorigin="anonymous"` (required by the
-   browser for the check to run).
-2. **Hash verification on script load** — the `integrity` attribute itself is
-   the verification directive; the browser performs the digest and blocks
-   execution on mismatch. External `<script src="https://…">` tags are also
-   pinned when their URL is in `KNOWN_EXTERNAL_INTEGRITY` (e.g. Telegram's
-   `telegram-web-app.js`).
+1. **Automatic build-time hash generation** — Rolldown (Vite 8) can finalise
+   chunk bytes *after* `transformIndexHtml`, so the plugin performs the
+   authoritative pass in `closeBundle`: it reads `dist/index.html`, walks every
+   `<script>` and `<link>` tag, hashes the corresponding file from disk
+   (SHA-384) and rewrites the `integrity="sha384-…"` attribute to match. The
+   earlier `transformIndexHtml` and `generateBundle` hooks still run so the
+   emitted bundle entries and `manifest.json` carry integrity metadata for
+   programmatic consumers, but the HTML tag values that reach the browser are
+   always the disk-derived ones. Every rewritten tag also carries
+   `crossorigin="anonymous"`, which the browser requires to run the check.
+2. **Hash verification on script load** — the `integrity` attribute is the
+   verification directive; the browser performs the digest and blocks execution
+   on mismatch. External `<script src="https://…">` tags are pinned only when
+   their exact URL appears in `KNOWN_EXTERNAL_INTEGRITY` or in the caller's
+   `external` option; un-listed URLs are left untouched.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[Source: index.html + src/main.tsx] --> B[Vite / Rollup build]
+    A[Source: index.html + src/main.tsx] --> B[Vite / Rolldown build]
     B --> C{generateBundle hook}
-    C -->|Each chunk / asset| D[Compute SHA-384 integrity]\nattach to bundle item
-    C -->|manifest.json entries| E[Inject file + cssIntegrity]
+    C -->|Each chunk / asset| D[Stamp integrity on bundle item]
+    C -->|manifest.json entries| E[Inject file + cssIntegrity metadata]
     D --> F{transformIndexHtml - order:post}
     E --> F
-    F -->|Local bundle URL| G[find item in bundle →\ninject integrity + crossorigin]
-    F -->|External URL in KNOWN_EXTERNAL_INTEGRITY| H[Inject pinned hash]
+    F -->|Local bundle URL| G[First-pass integrity from chunk.code]
+    F -->|External URL in KNOWN_EXTERNAL_INTEGRITY or external option| H[Inject allow-listed pinned hash]
     F -->|Other external URL| I[Leave untouched - opt-in only]
-    G --> J[dist/index.html with SRI attributes]
+    G --> J[Provisional dist/index.html written to disk]
     H --> J
     I --> J
-    J --> K[Browser loads asset]
-    K --> L{Digest matches integrity?}
-    L -->|Yes| M[Execute / Apply]
-    L -->|No| N[Block: refuses to run tampered asset]
+    J --> K{closeBundle hook}
+    K -->|Read dist/index.html| L[For each script/link tag, read referenced file from dist/]
+    L --> M[Recompute SHA-384 from actual bytes and overwrite integrity attribute]
+    M --> N[Final dist/index.html - integrity matches bytes on disk]
+    N --> O[Browser loads asset]
+    O --> P{Digest matches integrity?}
+    P -->|Yes| Q[Execute / Apply]
+    P -->|No| R[Block: refuses to run tampered asset]
 ```
 
 ## Data flow inside `vite.config.ts`
@@ -62,11 +72,20 @@ flowchart TD
 * **`enforce: "post"`** — runs *after* the standard HTML injection so it sees
   the final bundle URLs (hashed filenames such as `assets/index-DxY2.js`).
 * **Idempotent** — existing `integrity` / `crossorigin` attributes are never
-  overwritten. Attributes like `data-integrity` are preserved.
+  duplicated by `transformIndexHtml`; `closeBundle` overwrites `integrity`
+  values (that's the whole point) but preserves every other attribute including
+  `data-integrity`.
+* **Disk-authoritative** — `closeBundle` reads each local asset from disk and
+  recomputes the digest so the emitted `integrity` value always matches the
+  bytes the browser will fetch. This is what prevents the Rolldown
+  `chunk.code` ≠ on-disk-file mismatch that caused the Playwright e2e run in
+  PR #85 to fail with `Failed to find a valid digest in the 'integrity' attribute`.
 * **Conservative on externals** — third-party URLs are only touched when they
   appear in `KNOWN_EXTERNAL_INTEGRITY` or the caller passes `external: { url: hash }`.
-  Unknown protocol-relative or absolute URLs are passed through unchanged so we
-  never break a page by pinning a hash we did not verify.
+  Unknown protocol-relative or absolute URLs are passed through unchanged.
+  `KNOWN_EXTERNAL_INTEGRITY` ships empty because hosts like `telegram.org`
+  serve different bytes per request (accept-encoding, referer, sec-fetch-*),
+  making build-host-computed hashes unreliable.
 
 ## Adding a new external script
 

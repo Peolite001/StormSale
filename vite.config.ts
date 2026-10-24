@@ -4,6 +4,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { visualizer } from "rollup-plugin-visualizer";
 import crypto from "node:crypto";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join, resolve as resolvePath, sep } from "node:path";
 
 /**
  * Minimal structural shape of a Rollup/Rolldown bundle entry that the SRI
@@ -50,12 +52,16 @@ export interface SubresourceIntegrityOptions {
  * `index.html`. Keep this map small and reviewed — values must be produced from
  * the upstream file (e.g. `openssl dgst -sha384 -binary file.js | base64 -w0`)
  * so the browser can verify them at load-time.
+ *
+ * Third-party assets that vary by request headers (compression, referer,
+ * user-agent) cannot be safely pinned from the build host and are intentionally
+ * left un-listed so consumers opt-in explicitly via `subresourceIntegrity({
+ * external: { ... } })`. Notably `https://telegram.org/js/telegram-web-app.js`
+ * is served with different bytes depending on the client's `sec-fetch-*` and
+ * `referer` headers, so pinning a hash computed via Node's `fetch` breaks the
+ * browser integrity check (see PR #85 e2e run on Playwright Chromium).
  */
-export const KNOWN_EXTERNAL_INTEGRITY: Record<string, string> = {
-  // Telegram Mini Apps SDK – https://telegram.org/js/telegram-web-app.js
-  "https://telegram.org/js/telegram-web-app.js":
-    "sha384-PyI6uk8O3pfRRl4+CaepaS++FqtEbco/HaV3jzdYl4y+U7HMQvn3gWVfKhjuzfzG",
-};
+export const KNOWN_EXTERNAL_INTEGRITY: Record<string, string> = {};
 
 /**
  * Computes the Subresource Integrity hash for a given content string or buffer.
@@ -83,6 +89,9 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
   const externalMap: Record<string, string> = { ...KNOWN_EXTERNAL_INTEGRITY, ...(options?.external ?? {}) };
   const EXTERNAL_URL_RE = /^(https?:)?\/\//i;
   let base = "/";
+  let projectRoot = process.cwd();
+  let outDir = "dist";
+  let resolvedOutDir = resolvePath(process.cwd(), "dist");
 
   /**
    * Given a `src`/`href` value, return the integrity string to inject or
@@ -129,6 +138,9 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
 
     configResolved(config) {
       base = config.base || "/";
+      projectRoot = config.root || process.cwd();
+      outDir = config.build?.outDir || "dist";
+      resolvedOutDir = resolvePath(projectRoot, outDir);
     },
 
     transformIndexHtml: {
@@ -204,6 +216,77 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           }
         }
       }
+    },
+
+    /**
+     * Rolldown (Vite 8) may still finalise chunk bytes after `transformIndexHtml`
+     * runs, so any integrity value computed from `chunk.code` in that earlier
+     * hook can diverge from the file that ends up on disk and be rejected by the
+     * browser (Playwright e2e surfaced this as `Failed to find a valid digest…`
+     * for every emitted asset). This post-write pass re-derives integrity from
+     * the actual bytes in `dist/` and overwrites the attribute in `index.html`,
+     * which is the single source of truth the browser will fetch.
+     */
+    closeBundle() {
+      const htmlPath = join(resolvedOutDir, "index.html");
+      if (!existsSync(htmlPath)) return;
+
+      const normalizeLocal = (url: string): string | null => {
+        const clean = url.split(/[?#]/)[0];
+        let rel = clean;
+        if (base !== "/" && rel.startsWith(base)) rel = rel.slice(base.length);
+        rel = rel.replace(/^\.?\//, "");
+        return rel || null;
+      };
+
+      const rewriteTag = (
+        fullMatch: string,
+        attrs: string,
+        tagName: "script" | "link",
+        urlAttr: "src" | "href",
+      ): string => {
+        const urlMatch = attrs.match(new RegExp(`\\b${urlAttr}=["']([^"']+)["']`, "i"));
+        if (!urlMatch) return fullMatch;
+        const url = urlMatch[1];
+
+        let integrity: string | undefined;
+        if (EXTERNAL_URL_RE.test(url)) {
+          integrity = externalMap[url];
+        } else {
+          const rel = normalizeLocal(url);
+          if (!rel) return fullMatch;
+          const filePath = resolvePath(resolvedOutDir, rel);
+          // Guard against path traversal escaping the outDir.
+          if (filePath !== resolvedOutDir && !filePath.startsWith(resolvedOutDir + sep)) {
+            return fullMatch;
+          }
+          if (!existsSync(filePath)) return fullMatch;
+          integrity = computeIntegrity(readFileSync(filePath), algorithms);
+        }
+        if (!integrity) return fullMatch;
+
+        const isSelfClosing = /\/\s*$/.test(attrs);
+        let cleaned = attrs.replace(/\/\s*$/, "").trim();
+        if (/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleaned)) {
+          cleaned = cleaned.replace(/(\s+integrity=)["'][^"']*["']/i, `$1"${integrity}"`);
+        } else {
+          cleaned += ` integrity="${integrity}"`;
+        }
+        if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleaned)) {
+          cleaned += ` crossorigin="${crossOrigin}"`;
+        }
+        return `<${tagName} ${cleaned}${isSelfClosing ? " />" : ">"}`;
+      };
+
+      let html = readFileSync(htmlPath, "utf8");
+      html = html.replace(/<script\b([^>]*)>/gi, (m, a: string) => rewriteTag(m, a, "script", "src"));
+      html = html.replace(/<link\b([^>]*)>/gi, (m, a: string) => {
+        const relMatch = a.match(/\brel=["']([^"']+)["']/i);
+        const rel = relMatch ? relMatch[1].toLowerCase() : "";
+        if (!["stylesheet", "modulepreload", "preload"].includes(rel)) return m;
+        return rewriteTag(m, a, "link", "href");
+      });
+      writeFileSync(htmlPath, html, "utf8");
     },
   };
 }
