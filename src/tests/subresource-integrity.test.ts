@@ -1,6 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { computeIntegrity, subresourceIntegrity } from "../../vite.config";
+import {
+  computeIntegrity,
+  subresourceIntegrity,
+  KNOWN_EXTERNAL_INTEGRITY,
+} from "../../vite.config";
 import type { Plugin, IndexHtmlTransformContext } from "vite";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const invokeHandler = (plugin: Plugin, html: string, bundle: Record<string, any>): string => {
+  const handler =
+    typeof plugin.transformIndexHtml === "object" &&
+    "handler" in plugin.transformIndexHtml
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (plugin.transformIndexHtml as any).handler
+      : undefined;
+  if (!handler) throw new Error("transformIndexHtml handler is not defined");
+  const ctx = { bundle } as unknown as IndexHtmlTransformContext;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return handler(html, ctx) as string;
+};
 
 describe("Subresource Integrity (SRI) Plugin & Hashing (#85)", () => {
   describe("computeIntegrity", () => {
@@ -97,6 +115,36 @@ describe("Subresource Integrity (SRI) Plugin & Hashing (#85)", () => {
 
       expect(transformed).toContain(`integrity="${expectedIntegrity}"`);
       expect(transformed).toContain('crossorigin="use-credentials"');
+    });
+
+    it("pins allow-listed external CDN scripts with integrity + crossorigin", () => {
+      const plugin = subresourceIntegrity() as Plugin;
+      const telegramUrl = "https://telegram.org/js/telegram-web-app.js";
+      const expectedHash = KNOWN_EXTERNAL_INTEGRITY[telegramUrl];
+      expect(expectedHash).toMatch(/^sha384-[A-Za-z0-9+/=]+$/);
+
+      const html = `<script src="${telegramUrl}"></script>`;
+      const transformed = invokeHandler(plugin, html, {});
+
+      expect(transformed).toContain(`integrity="${expectedHash}"`);
+      expect(transformed).toContain('crossorigin="anonymous"');
+      expect(transformed).toContain(`src="${telegramUrl}"`);
+    });
+
+    it("accepts caller-supplied external URL hashes and merges them with the defaults", () => {
+      const customUrl = "https://cdn.example.com/widget.js";
+      const customHash = "sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+      const plugin = subresourceIntegrity({ external: { [customUrl]: customHash } }) as Plugin;
+
+      const html = `<script src="${customUrl}"></script>
+<link rel="stylesheet" href="https://telegram.org/js/telegram-web-app.js">`;
+      const transformed = invokeHandler(plugin, html, {});
+
+      expect(transformed).toContain(`integrity="${customHash}"`);
+      // Default Telegram hash is still available via the merged map.
+      expect(transformed).toContain(
+        `integrity="${KNOWN_EXTERNAL_INTEGRITY["https://telegram.org/js/telegram-web-app.js"]}"`,
+      );
     });
 
     it("bypasses external and protocol-relative URLs", () => {

@@ -1,5 +1,6 @@
 ﻿import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
+import type { OutputAsset, OutputBundle, OutputChunk } from "rollup";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { visualizer } from "rollup-plugin-visualizer";
@@ -19,7 +20,28 @@ export interface SubresourceIntegrityOptions {
    * Default: 'anonymous'
    */
   crossorigin?: "anonymous" | "use-credentials";
+  /**
+   * Integrity hashes for external (absolute or protocol-relative) URLs such as
+   * third-party CDN scripts. Keys are exact URLs found in the HTML `src`/`href`
+   * attribute; values are pre-computed integrity strings (e.g. `sha384-…`).
+   *
+   * Any external URL not present in this map is left untouched, so the caller
+   * stays in control of which third-party resources are pinned.
+   */
+  external?: Record<string, string>;
 }
+
+/**
+ * Well-known integrity hashes for third-party assets loaded from StormSale's
+ * `index.html`. Keep this map small and reviewed — values must be produced from
+ * the upstream file (e.g. `openssl dgst -sha384 -binary file.js | base64 -w0`)
+ * so the browser can verify them at load-time.
+ */
+export const KNOWN_EXTERNAL_INTEGRITY: Record<string, string> = {
+  // Telegram Mini Apps SDK – https://telegram.org/js/telegram-web-app.js
+  "https://telegram.org/js/telegram-web-app.js":
+    "sha384-PyI6uk8O3pfRRl4+CaepaS++FqtEbco/HaV3jzdYl4y+U7HMQvn3gWVfKhjuzfzG",
+};
 
 /**
  * Computes the Subresource Integrity hash for a given content string or buffer.
@@ -44,7 +66,47 @@ export function computeIntegrity(
 export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plugin {
   const algorithms = options?.algorithms ?? ["sha384"];
   const crossOrigin = options?.crossorigin ?? "anonymous";
+  const externalMap: Record<string, string> = { ...KNOWN_EXTERNAL_INTEGRITY, ...(options?.external ?? {}) };
+  const EXTERNAL_URL_RE = /^(https?:)?\/\//i;
   let base = "/";
+
+  /**
+   * Given a `src`/`href` value, return the integrity string to inject or
+   * `undefined` when the tag should be left untouched.
+   */
+  const resolveIntegrity = (url: string, bundle: OutputBundle): string | undefined => {
+    if (EXTERNAL_URL_RE.test(url)) {
+      // Pin only explicitly allow-listed third-party URLs.
+      return externalMap[url];
+    }
+
+    const cleanUrl = url.split(/[?#]/)[0];
+    let normalized = cleanUrl;
+    if (base !== "/" && normalized.startsWith(base)) {
+      normalized = normalized.slice(base.length);
+    }
+    normalized = normalized.replace(/^\.?\//, "");
+
+    const item: OutputAsset | OutputChunk | undefined =
+      bundle[normalized] ?? Object.values(bundle).find((i) => i.fileName === normalized);
+    if (!item) return undefined;
+
+    const content = item.type === "chunk" ? item.code : item.source;
+    if (!content) return undefined;
+    return computeIntegrity(content as string | Uint8Array, algorithms);
+  };
+
+  const applyIntegrityAttrs = (attrs: string, integrity: string) => {
+    const isSelfClosing = /\/\s*$/.test(attrs);
+    let cleaned = attrs.replace(/\/\s*$/, "").trim();
+    if (!/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleaned)) {
+      cleaned += ` integrity="${integrity}"`;
+    }
+    if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleaned)) {
+      cleaned += ` crossorigin="${crossOrigin}"`;
+    }
+    return { cleaned, isSelfClosing };
+  };
 
   return {
     name: "vite-plugin-subresource-integrity",
@@ -64,88 +126,29 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
 
         const bundle = ctx.bundle;
 
-        const findBundleItem = (url: string) => {
-          const cleanUrl = url.split(/[?#]/)[0];
-          let normalized = cleanUrl;
-          if (base !== "/" && normalized.startsWith(base)) {
-            normalized = normalized.slice(base.length);
-          }
-          normalized = normalized.replace(/^\.?\//, "");
-
-          if (bundle[normalized]) {
-            return bundle[normalized];
-          }
-
-          const byFileName = Object.values(bundle).find((item) => item.fileName === normalized);
-          if (byFileName) {
-            return byFileName;
-          }
-
-          return undefined;
-        };
-
-        // 1. Process <script ...> tags
-        html = html.replace(/<script\b([^>]*)>/gi, (fullMatch, attrs) => {
+        // 1. Process <script ...> tags (both first-party bundle and pinned external URLs)
+        html = html.replace(/<script\b([^>]*)>/gi, (fullMatch, attrs: string) => {
           const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
           if (!srcMatch) return fullMatch;
-          const src = srcMatch[1];
-          if (/^(https?:)?\/\//i.test(src)) {
-            return fullMatch;
-          }
-
-          const item = findBundleItem(src);
-          if (!item) return fullMatch;
-
-          const content = item.type === "chunk" ? item.code : item.source;
-          if (!content) return fullMatch;
-
-          const integrity = computeIntegrity(content, algorithms);
-          const isSelfClosing = /\/\s*$/.test(attrs);
-          let cleanedAttrs = attrs.replace(/\/\s*$/, "").trim();
-
-          if (!/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleanedAttrs)) {
-            cleanedAttrs += ` integrity="${integrity}"`;
-          }
-          if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleanedAttrs)) {
-            cleanedAttrs += ` crossorigin="${crossOrigin}"`;
-          }
-
-          return `<script ${cleanedAttrs}${isSelfClosing ? " />" : ">"}`;
+          const integrity = resolveIntegrity(srcMatch[1], bundle);
+          if (!integrity) return fullMatch;
+          const { cleaned, isSelfClosing } = applyIntegrityAttrs(attrs, integrity);
+          return `<script ${cleaned}${isSelfClosing ? " />" : ">"}`;
         });
 
         // 2. Process <link ...> tags (stylesheets, modulepreload, preload)
-        html = html.replace(/<link\b([^>]*)>/gi, (fullMatch, attrs) => {
+        html = html.replace(/<link\b([^>]*)>/gi, (fullMatch, attrs: string) => {
           const relMatch = attrs.match(/\brel=["']([^"']+)["']/i);
           const rel = relMatch ? relMatch[1].toLowerCase() : "";
           if (!["stylesheet", "modulepreload", "preload"].includes(rel)) {
             return fullMatch;
           }
-
           const hrefMatch = attrs.match(/\bhref=["']([^"']+)["']/i);
           if (!hrefMatch) return fullMatch;
-          const href = hrefMatch[1];
-          if (/^(https?:)?\/\//i.test(href)) {
-            return fullMatch;
-          }
-
-          const item = findBundleItem(href);
-          if (!item) return fullMatch;
-
-          const content = item.type === "chunk" ? item.code : item.source;
-          if (!content) return fullMatch;
-
-          const integrity = computeIntegrity(content, algorithms);
-          const isSelfClosing = /\/\s*$/.test(attrs);
-          let cleanedAttrs = attrs.replace(/\/\s*$/, "").trim();
-
-          if (!/(?:^|\s)integrity(?=[\s=>]|$)/i.test(cleanedAttrs)) {
-            cleanedAttrs += ` integrity="${integrity}"`;
-          }
-          if (!/(?:^|\s)crossorigin(?=[\s=>]|$)/i.test(cleanedAttrs)) {
-            cleanedAttrs += ` crossorigin="${crossOrigin}"`;
-          }
-
-          return `<link ${cleanedAttrs}${isSelfClosing ? " />" : ">"}`;
+          const integrity = resolveIntegrity(hrefMatch[1], bundle);
+          if (!integrity) return fullMatch;
+          const { cleaned, isSelfClosing } = applyIntegrityAttrs(attrs, integrity);
+          return `<link ${cleaned}${isSelfClosing ? " />" : ">"}`;
         });
 
         return html;
