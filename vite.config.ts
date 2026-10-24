@@ -1,10 +1,24 @@
 ﻿import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
-import type { OutputAsset, OutputBundle, OutputChunk } from "rollup";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { visualizer } from "rollup-plugin-visualizer";
 import crypto from "node:crypto";
+
+/**
+ * Minimal structural shape of a Rollup/Rolldown bundle entry that the SRI
+ * plugin needs. Declared locally so we do not add `rollup` as a direct
+ * dependency (Vite 8 ships Rolldown and only re-exports a subset of Rollup
+ * types). Compatible with both `OutputAsset` and `OutputChunk`.
+ */
+type BundleItem = {
+  type: "chunk" | "asset";
+  fileName: string;
+  code?: string;
+  source?: string | Uint8Array;
+  integrity?: string;
+};
+type BundleLike = Record<string, BundleItem>;
 
 /**
  * Options for Subresource Integrity (SRI) plugin.
@@ -74,7 +88,7 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
    * Given a `src`/`href` value, return the integrity string to inject or
    * `undefined` when the tag should be left untouched.
    */
-  const resolveIntegrity = (url: string, bundle: OutputBundle): string | undefined => {
+  const resolveIntegrity = (url: string, bundle: BundleLike): string | undefined => {
     if (EXTERNAL_URL_RE.test(url)) {
       // Pin only explicitly allow-listed third-party URLs.
       return externalMap[url];
@@ -87,13 +101,13 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
     }
     normalized = normalized.replace(/^\.?\//, "");
 
-    const item: OutputAsset | OutputChunk | undefined =
+    const item: BundleItem | undefined =
       bundle[normalized] ?? Object.values(bundle).find((i) => i.fileName === normalized);
     if (!item) return undefined;
 
     const content = item.type === "chunk" ? item.code : item.source;
     if (!content) return undefined;
-    return computeIntegrity(content as string | Uint8Array, algorithms);
+    return computeIntegrity(content, algorithms);
   };
 
   const applyIntegrityAttrs = (attrs: string, integrity: string) => {
@@ -124,7 +138,7 @@ export function subresourceIntegrity(options?: SubresourceIntegrityOptions): Plu
           return html;
         }
 
-        const bundle = ctx.bundle;
+        const bundle = ctx.bundle as unknown as BundleLike;
 
         // 1. Process <script ...> tags (both first-party bundle and pinned external URLs)
         html = html.replace(/<script\b([^>]*)>/gi, (fullMatch, attrs: string) => {
